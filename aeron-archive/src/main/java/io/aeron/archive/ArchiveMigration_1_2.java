@@ -26,12 +26,14 @@ import org.agrona.SemanticVersion;
 import org.agrona.collections.ArrayUtil;
 
 import java.io.File;
+import java.io.PrintStream;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 
+import static io.aeron.archive.Archive.Configuration.RECORDING_SEGMENT_SUFFIX;
 import static io.aeron.archive.Catalog.INVALID;
 import static io.aeron.archive.MigrationUtils.fullVersionString;
 
@@ -44,42 +46,50 @@ class ArchiveMigration_1_2 implements ArchiveMigrationStep
         return MINIMUM_VERSION;
     }
 
-    public void migrate(final ArchiveMarkFile markFile, final Catalog catalog, final File archiveDir)
+    public void migrate(
+        final ArchiveMarkFile markFile, final Catalog catalog, final File archiveDir, final PrintStream out)
     {
         final FileChannel migrationTimestampFile = MigrationUtils.createMigrationTimestampFile(
             archiveDir, markFile.decoder().version(), minimumVersion());
-
-        catalog.forEach(
-            (headerEncoder, headerDecoder, encoder, decoder) ->
-            {
-                final String version1Prefix = decoder.recordingId() + "-";
-                final String version1Suffix = ".rec";
-                String[] segmentFiles = archiveDir.list(
-                    (dir, filename) -> filename.startsWith(version1Prefix) && filename.endsWith(version1Suffix));
-
-                if (null == segmentFiles)
+        try
+        {
+            catalog.forEach(
+                (headerEncoder, headerDecoder, encoder, decoder) ->
                 {
-                    segmentFiles = ArrayUtil.EMPTY_STRING_ARRAY;
-                }
+                    final String version1Prefix = decoder.recordingId() + "-";
+                    String[] segmentFiles = archiveDir.list(
+                        (dir, filename) -> filename.startsWith(version1Prefix) &&
+                                           filename.endsWith(RECORDING_SEGMENT_SUFFIX));
 
-                migrateRecording(
-                    archiveDir,
-                    segmentFiles,
-                    version1Prefix,
-                    version1Suffix,
-                    headerEncoder,
-                    headerDecoder,
-                    encoder,
-                    decoder);
-            });
+                    if (null == segmentFiles)
+                    {
+                        segmentFiles = ArrayUtil.EMPTY_STRING_ARRAY;
+                    }
 
-        markFile.encoder().version(minimumVersion());
-        catalog.updateVersion(minimumVersion());
+                    migrateRecording(
+                        out,
+                        archiveDir,
+                        segmentFiles,
+                        version1Prefix,
+                        RECORDING_SEGMENT_SUFFIX,
+                        headerEncoder,
+                        headerDecoder,
+                        encoder,
+                        decoder);
+                });
 
-        CloseHelper.close(migrationTimestampFile);
+            markFile.encoder().version(minimumVersion());
+            catalog.updateVersion(minimumVersion());
+
+        }
+        finally
+        {
+            CloseHelper.close(migrationTimestampFile);
+        }
     }
 
     private void migrateRecording(
+        final PrintStream out,
         final File archiveDir,
         final String[] segmentFiles,
         final String prefix,
@@ -102,11 +112,11 @@ class ArchiveMigration_1_2 implements ArchiveMigrationStep
 
         if (startTermBasePosition == 0 || termLength == segmentLength)
         {
-            System.out.println("(recordingId=" + recordingId + ") OK - skipped.");
+            out.println("(recordingId=" + recordingId + ") OK - skipped.");
             return;
         }
 
-        System.out.println(
+        out.println(
             "(recordingId=" + recordingId + ") startTermBasePosition=" + startTermBasePosition + ")");
 
         Arrays.sort(segmentFiles);
@@ -126,7 +136,7 @@ class ArchiveMigration_1_2 implements ArchiveMigrationStep
                 }
                 catch (final Exception ex)
                 {
-                    System.err.println(
+                    out.println(
                         "(recordingId=" + recordingId + ") ERR: malformed recording filename:" + filename);
                     throw ex;
                 }
@@ -137,7 +147,7 @@ class ArchiveMigration_1_2 implements ArchiveMigrationStep
                 final Path sourcePath = new File(archiveDir, filename).toPath();
                 final Path targetPath = sourcePath.resolveSibling(newFilename);
 
-                System.out.println("(recordingId=" + recordingId + ") renaming " + sourcePath + " -> " + targetPath);
+                out.println("(recordingId=" + recordingId + ") renaming " + sourcePath + " -> " + targetPath);
 
                 try
                 {
@@ -146,7 +156,7 @@ class ArchiveMigration_1_2 implements ArchiveMigrationStep
                 }
                 catch (final Exception ex)
                 {
-                    System.err.println(
+                    out.println(
                         "(recordingId=" + recordingId + ") ERR: could not rename filename: " +
                         sourcePath + " -> " + targetPath);
                     LangUtil.rethrowUnchecked(ex);
@@ -154,7 +164,7 @@ class ArchiveMigration_1_2 implements ArchiveMigrationStep
             }
         }
 
-        System.out.println("(recordingId=" + recordingId + ") OK");
+        out.println("(recordingId=" + recordingId + ") OK");
     }
 
     public String toString()

@@ -16,10 +16,11 @@
 package io.aeron.archive;
 
 import java.io.File;
+import java.io.PrintStream;
 
 interface ArchiveMigrationStep
 {
     int minimumVersion();
 
-    void migrate(ArchiveMarkFile markFile, Catalog catalog, File archiveDir);
+    void migrate(ArchiveMarkFile markFile, Catalog catalog, File archiveDir, PrintStream out);
 }
